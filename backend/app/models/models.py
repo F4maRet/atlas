@@ -135,6 +135,7 @@ class Conclusion(Base, TimestampMixin):
     id = Column(Integer, primary_key=True, index=True)
     article_id = Column(Integer, ForeignKey("articles.id", ondelete="CASCADE"), unique=True)
     file_path = Column(String(500))
+    original_filename = Column(String(500))
     generated_from_template = Column(Boolean, default=False)
     template_id = Column(Integer, ForeignKey("document_templates.id", ondelete="SET NULL"), nullable=True)
     notes = Column(Text)

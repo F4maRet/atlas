@@ -12,8 +12,12 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./backend/migrations/init.sql:/docker-entrypoint-initdb.d/init.sql
-    ports:
-      - "5432:5432"
+    # Порт БД больше не публикуется на хост — раньше 5432 был доступен снаружи
+    # без всякой аутентификации в обход приложения. Для доступа к БД
+    # используйте pgAdmin (--profile tools) или `docker compose exec db psql`.
+    # Если порт нужен явно для локальной разработки — раскомментируйте:
+    # ports:
+    #   - "5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-atlas_user} -d ${POSTGRES_DB:-atlas}"]
       interval: 10s
@@ -32,6 +36,8 @@ services:
       UPLOAD_DIR: /app/uploads
       MAX_FILE_SIZE_MB: ${MAX_FILE_SIZE_MB:-100}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost,http://localhost:80}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-change-me}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
     volumes:
       - uploads_data:/app/uploads
       - ./backend:/app

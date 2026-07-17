@@ -59,6 +59,18 @@ CREATE TABLE IF NOT EXISTS proposals (
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Proposal certificates (Свидетельства для рац. предложений)
+CREATE TABLE IF NOT EXISTS proposal_certificates (
+    id                   SERIAL PRIMARY KEY,
+    proposal_id          INTEGER NOT NULL REFERENCES proposals(id) ON DELETE CASCADE UNIQUE,
+    file_path            VARCHAR(500),
+    original_filename    VARCHAR(500),
+    file_size_original   BIGINT DEFAULT 0,
+    file_size_compressed BIGINT DEFAULT 0,
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- Software
 CREATE TABLE IF NOT EXISTS software (
     id                   SERIAL PRIMARY KEY,
@@ -92,6 +104,7 @@ CREATE TABLE IF NOT EXISTS conclusions (
     id                       SERIAL PRIMARY KEY,
     article_id               INTEGER NOT NULL UNIQUE REFERENCES articles(id) ON DELETE CASCADE,
     file_path                VARCHAR(500),
+    original_filename        VARCHAR(500),
     generated_from_template  BOOLEAN DEFAULT FALSE,
     template_id              INTEGER REFERENCES document_templates(id) ON DELETE SET NULL,
     notes                    TEXT,
@@ -148,6 +161,12 @@ CREATE TABLE IF NOT EXISTS software_authors (
     PRIMARY KEY (software_id, author_id)
 );
 
+CREATE TABLE IF NOT EXISTS conference_participants (
+    conference_id INTEGER NOT NULL REFERENCES conferences(id) ON DELETE CASCADE,
+    author_id     INTEGER NOT NULL REFERENCES authors(id) ON DELETE CASCADE,
+    PRIMARY KEY (conference_id, author_id)
+);
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_articles_collection ON articles(collection_id);
 CREATE INDEX IF NOT EXISTS idx_articles_created ON articles(created_at DESC);
@@ -155,6 +174,9 @@ CREATE INDEX IF NOT EXISTS idx_proposals_created ON proposals(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_software_created ON software(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_conferences_date ON conferences(date_start);
 CREATE INDEX IF NOT EXISTS idx_authors_name ON authors(full_name);
+CREATE INDEX IF NOT EXISTS idx_proposal_certificates_proposal ON proposal_certificates(proposal_id);
+CREATE INDEX IF NOT EXISTS idx_conf_participants_conf ON conference_participants(conference_id);
+CREATE INDEX IF NOT EXISTS idx_conf_participants_author ON conference_participants(author_id);
 
 -- Seed default document templates
 INSERT INTO document_templates (name, doc_type, description, is_active)

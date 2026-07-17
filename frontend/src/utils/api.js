@@ -1,21 +1,32 @@
 import axios from 'axios'
+import router from '@/router'
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL
     ? `${import.meta.env.VITE_API_URL}/api/v1`
     : '/api/v1',
   timeout: 60000,
+  withCredentials: true, // отправлять cookie сессии на другой порт/домен
 })
 
 api.interceptors.response.use(
   r => r,
   err => {
+    if (err.response?.status === 401 && router.currentRoute.value.name !== 'Login') {
+      router.push({ name: 'Login', query: { redirect: router.currentRoute.value.fullPath } })
+    }
     const msg = err.response?.data?.detail || err.message || 'Ошибка запроса'
     return Promise.reject(new Error(Array.isArray(msg) ? msg.map(m => m.msg).join('; ') : msg))
   }
 )
 
 export default api
+
+export const authApi = {
+  login: password => api.post('/auth/login', { password }),
+  logout: () => api.post('/auth/logout'),
+  check: () => api.get('/auth/check'),
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

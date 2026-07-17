@@ -1,5 +1,6 @@
 <template>
-  <div class="app-layout">
+  <RouterView v-if="route.meta.public" />
+  <div v-else class="app-layout">
     <aside class="sidebar">
       <div class="sidebar__logo">
         <span class="sidebar__logo-icon">⬡</span>
@@ -32,6 +33,7 @@
       <div class="sidebar__footer">
         <div class="sidebar__footer-dot" :class="{ online: health }"></div>
         <span>{{ health ? 'Сервер онлайн' : 'Нет соединения' }}</span>
+        <button class="sidebar__logout" title="Выйти" @click="logout">⏻</button>
       </div>
     </aside>
 
@@ -51,13 +53,24 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { format } from 'date-fns'
 import { ru } from 'date-fns/locale'
-import api from '@/utils/api'
+import api, { authApi } from '@/utils/api'
+import { invalidateAuthCache } from '@/router'
 
 const health = ref(false)
 const route = useRoute()
+const router = useRouter()
+
+async function logout() {
+  try {
+    await authApi.logout()
+  } finally {
+    invalidateAuthCache()
+    router.push({ name: 'Login' })
+  }
+}
 
 const mainNav = [
   { to: '/',            icon: '◈', label: 'Дашборд' },
@@ -162,6 +175,19 @@ onMounted(async () => {
   transition: background 0.3s;
 }
 .sidebar__footer-dot.online { background: var(--c-green); }
+.sidebar__logout {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--c-text3);
+  font-size: 15px;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 6px;
+  line-height: 1;
+  transition: var(--transition);
+}
+.sidebar__logout:hover { color: var(--c-red); background: var(--c-surface); }
 
 /* Main */
 .main-content { flex: 1; display: flex; flex-direction: column; overflow: hidden; }

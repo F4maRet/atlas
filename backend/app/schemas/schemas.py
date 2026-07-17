@@ -210,6 +210,7 @@ class ConclusionOut(BaseModel):
     id: int
     article_id: int
     file_path: Optional[str]
+    original_filename: Optional[str] = None
     generated_from_template: bool
     template_id: Optional[int]
     notes: Optional[str]

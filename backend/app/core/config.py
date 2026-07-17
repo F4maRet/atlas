@@ -10,6 +10,13 @@ class Settings(BaseSettings):
     MAX_FILE_SIZE_MB: int = 100
     ALLOWED_ORIGINS: List[str] = ["http://localhost", "http://localhost:80", "http://localhost:5173"]
 
+    # Единый пароль на вход в систему (простая защита без ролей).
+    # ОБЯЗАТЕЛЬНО смените в .env перед боевым использованием.
+    ADMIN_PASSWORD: str = "change-me"
+    # Ставить True, если система работает по HTTPS — тогда cookie сессии
+    # будет передаваться только по защищённому соединению.
+    COOKIE_SECURE: bool = False
+
     @field_validator("ALLOWED_ORIGINS", mode="before")
     @classmethod
     def parse_allowed_origins(cls, v):

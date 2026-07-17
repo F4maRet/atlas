@@ -6,6 +6,7 @@ Convert uploaded files to preview-friendly formats.
 import gzip
 import io
 import base64
+from html import escape
 from urllib.parse import quote
 
 from docx import Document
@@ -171,7 +172,13 @@ def _parse_paragraph(p_el, doc=None) -> str:
         if ct == "r":
             inline.append(_parse_run(child))
         elif ct == "hyperlink":
-            href = child.get(qn("r:id"), "")
+            r_id = child.get(qn("r:id"), "")
+            href = "#"
+            if r_id and doc is not None:
+                try:
+                    href = doc.part.rels[r_id].target_ref
+                except Exception:
+                    href = "#"
             link_parts = []
             for r in child:
                 rt = r.tag.split("}")[-1] if "}" in r.tag else r.tag
@@ -179,7 +186,10 @@ def _parse_paragraph(p_el, doc=None) -> str:
                     link_parts.append(_parse_run(r))
             link_text = "".join(link_parts)
             if link_text:
-                inline.append(f'<a href="{href}" style="color:#1a6fcc">{link_text}</a>')
+                inline.append(
+                    f'<a href="{escape(href, quote=True)}" target="_blank" '
+                    f'rel="noopener noreferrer" style="color:#1a6fcc">{link_text}</a>'
+                )
         elif ct == "bookmarkStart":
             pass
 

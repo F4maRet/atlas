@@ -6,7 +6,7 @@ import os
 import uuid
 from pathlib import Path
 from typing import Optional
-from fastapi import UploadFile
+from fastapi import UploadFile, HTTPException
 
 from app.core.config import settings
 
@@ -49,6 +49,17 @@ async def save_file(
     original_filename = upload.filename or "file"
     content = await upload.read()
     original_size = len(content)
+
+    max_bytes = settings.MAX_FILE_SIZE_MB * 1024 * 1024
+    if original_size > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"Файл «{original_filename}» слишком большой "
+                f"({original_size / 1024 / 1024:.1f} МБ). "
+                f"Максимально допустимый размер: {settings.MAX_FILE_SIZE_MB} МБ."
+            ),
+        )
 
     # Determine whether to compress
     content_type = upload.content_type or ""

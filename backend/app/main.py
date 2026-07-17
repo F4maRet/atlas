@@ -1,13 +1,30 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 from contextlib import asynccontextmanager
 import os
 
 from app.core.config import settings
+from app.core.security import verify_session_token, SESSION_COOKIE_NAME
 from app.db.session import engine
 from app.db.base import Base
 from app.api.v1.router import api_router
+
+
+class UploadsAuthMiddleware(BaseHTTPMiddleware):
+    """/uploads is served via StaticFiles, which bypasses FastAPI's Depends()
+    system entirely — so the same session-cookie check used everywhere else
+    has to be applied here separately, or uploaded files would stay world
+    readable to anyone who can guess/observe a file path."""
+
+    async def dispatch(self, request: Request, call_next):
+        if request.url.path.startswith("/uploads"):
+            token = request.cookies.get(SESSION_COOKIE_NAME)
+            if not verify_session_token(token or ""):
+                return JSONResponse({"detail": "Требуется вход в систему"}, status_code=401)
+        return await call_next(request)
 
 
 async def _seed_conclusion_template():
@@ -75,19 +92,43 @@ async def lifespan(app: FastAPI):
     for subdir in ["articles", "proposals", "software", "documents", "previews", "templates"]:
         os.makedirs(os.path.join(settings.UPLOAD_DIR, subdir), exist_ok=True)
 
-    # Run safe migrations (idempotent ALTER TABLE IF NOT EXISTS)
+    # Run safe schema patches (idempotent — every statement uses IF NOT EXISTS).
+    #
+    # init.sql only runs once, when Postgres creates a brand-new data volume.
+    # Deployments that already have data won't see new columns/tables added to
+    # init.sql later — so every patch file below is also re-applied on every
+    # startup, which keeps existing installations in sync without recreating
+    # the volume. (This is also what backfills schema that earlier versions
+    # of init.sql were missing entirely — see migrations/add_*.sql.)
     from app.db.session import engine
+    from pathlib import Path
     import sqlalchemy as sa
-    migrations = [
-        "ALTER TABLE articles ADD COLUMN IF NOT EXISTS lead_author_id INTEGER REFERENCES authors(id) ON DELETE SET NULL",
+    import logging
+
+    migrations_dir = Path(__file__).parent.parent / "migrations"
+    patch_files = [
+        "add_lead_author.sql",
+        "add_certificates.sql",
+        "add_conference_participants.sql",
+        "add_conclusion_filename.sql",
     ]
+
     async with engine.begin() as conn:
-        for sql in migrations:
-            try:
-                await conn.execute(sa.text(sql))
-            except Exception as e:
-                import logging
-                logging.warning(f"Migration skipped: {e}")
+        for fname in patch_files:
+            fpath = migrations_dir / fname
+            if not fpath.exists():
+                continue
+            sql_text = fpath.read_text(encoding="utf-8")
+            for raw_statement in sql_text.split(";"):
+                # strip SQL line comments before checking if anything is left
+                lines = [l for l in raw_statement.splitlines() if not l.strip().startswith("--")]
+                statement = "\n".join(lines).strip()
+                if not statement:
+                    continue
+                try:
+                    await conn.execute(sa.text(statement))
+                except Exception as e:
+                    logging.warning(f"Migration patch skipped ({fname}): {e}")
 
     # Seed built-in conclusion template into document_templates if absent
     await _seed_conclusion_template()
@@ -110,6 +151,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(UploadsAuthMiddleware)
 
 # Serve uploaded files
 app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR), name="uploads")

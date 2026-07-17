@@ -51,6 +51,7 @@ async def upload_conclusion(
     if file and file.filename:
         meta = await save_file(file, "documents", compress=True)
         c.file_path = meta["file_path"]
+        c.original_filename = meta["original_filename"]
     db.add(c)
     await db.commit()
     await db.refresh(c)
@@ -78,7 +79,7 @@ async def download_conclusion(article_id: int, db: AsyncSession = Depends(get_db
     return Response(
         content=content,
         media_type="application/octet-stream",
-        headers={"Content-Disposition": safe_content_disposition("attachment", "conclusion.docx")},
+        headers={"Content-Disposition": safe_content_disposition("attachment", c.original_filename or "conclusion.docx")},
     )
 
 
