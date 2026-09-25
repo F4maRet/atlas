@@ -1,14 +1,16 @@
 import hmac
 
-from fastapi import APIRouter, HTTPException, Response, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from app.core.config import settings
 from app.core.security import (
-    create_session_token,
-    verify_session_token,
     SESSION_COOKIE_NAME,
     SESSION_MAX_AGE,
+    client_ip,
+    create_session_token,
+    is_authenticated,
+    login_limiter,
 )
 
 router = APIRouter()
@@ -19,14 +21,17 @@ class LoginRequest(BaseModel):
 
 
 @router.post("/login")
-async def login(data: LoginRequest, response: Response):
-    if not hmac.compare_digest(data.password, settings.ADMIN_PASSWORD):
+async def login(data: LoginRequest, request: Request, response: Response):
+    ip = client_ip(request)
+    login_limiter.check(ip)
+    if not hmac.compare_digest(data.password.encode("utf-8"), settings.ADMIN_PASSWORD.encode("utf-8")):
+        login_limiter.fail(ip)
         raise HTTPException(401, "Неверный пароль")
+    login_limiter.reset(ip)
 
-    token = create_session_token()
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
-        value=token,
+        value=create_session_token(),
         max_age=SESSION_MAX_AGE,
         httponly=True,
         samesite="lax",
@@ -37,11 +42,10 @@ async def login(data: LoginRequest, response: Response):
 
 @router.post("/logout")
 async def logout(response: Response):
-    response.delete_cookie(SESSION_COOKIE_NAME)
+    response.delete_cookie(SESSION_COOKIE_NAME, httponly=True, samesite="lax", secure=settings.COOKIE_SECURE)
     return {"status": "ok"}
 
 
 @router.get("/check")
 async def check(request: Request):
-    token = request.cookies.get(SESSION_COOKIE_NAME)
-    return {"authenticated": verify_session_token(token or "")}
+    return {"authenticated": is_authenticated(request)}

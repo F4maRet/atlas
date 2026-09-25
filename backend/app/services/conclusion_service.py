@@ -1,18 +1,15 @@
 """
-Generate a conclusion document (Заключение об открытом публиковании)
-by filling placeholders in the DOCX template.
+Генерация заключения об открытом опубликовании по DOCX-шаблону.
 
-Placeholders in template:
-  [название_статьи]   → article title
-  [ФИО_авторов]       → abbreviated author names (Иванов И.И., Петров П.П.)
-  [окончание_автор]   → suffix: "а" for 1 author, "ов" for 2+
-  [месяц_загрузки]    → month name in genitive case (ru)
-  [год_загрузки]      → 4-digit year
-  [главный_автор]     → lead author abbreviated name (or first author)
+Плейсхолдеры в шаблоне:
+  [название_статьи] / [имя статьи]     → название статьи
+  [ФИО_авторов]                        → авторы в сокращённом виде (Иванов И.И., Петров П.П.)
+  [окончание_автор] / [а|ов]           → «а» для одного автора, «ов» для нескольких
+  [месяц_загрузки] / [Месяц_загрузки]  → месяц в родительном падеже
+  [год_загрузки] / [Год_загрузки]      → год
+  [главный_автор]                      → главный автор (или первый в списке)
 """
-
 import io
-import re
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
@@ -22,54 +19,83 @@ from docx import Document
 BUILTIN_TEMPLATE_PATH = Path(__file__).parent.parent / "templates" / "conclusion_template.docx"
 
 MONTHS_GENITIVE = {
-    1:  "января",
-    2:  "февраля",
-    3:  "марта",
-    4:  "апреля",
-    5:  "мая",
-    6:  "июня",
-    7:  "июля",
-    8:  "августа",
-    9:  "сентября",
-    10: "октября",
-    11: "ноября",
-    12: "декабря",
+    1: "января", 2: "февраля", 3: "марта", 4: "апреля", 5: "мая", 6: "июня",
+    7: "июля", 8: "августа", 9: "сентября", 10: "октября", 11: "ноября", 12: "декабря",
 }
 
 
 def abbreviate_name(full_name: str) -> str:
-    """
-    Convert full name to abbreviated form.
-    'Лаукарт Михаил Сергеевич' -> 'Лаукарт М.С.'
-    'Иванов Иван' -> 'Иванов И.'
-    """
+    """'Лаукарт Михаил Сергеевич' → 'Лаукарт М.С.'; уже сокращённые имена не портит."""
     parts = full_name.strip().split()
     if not parts:
         return full_name
-    surname = parts[0]
-    initials = "".join(p[0].upper() + "." for p in parts[1:] if p)
+    surname, rest = parts[0], parts[1:]
+    initials = ""
+    for p in rest:
+        for chunk in p.split("."):
+            chunk = chunk.strip()
+            if chunk:
+                initials += chunk[0].upper() + "."
     return f"{surname} {initials}".strip()
+
+
+def conclusion_filename(lead_name: Optional[str], date: Optional[datetime]) -> str:
+    """Заключение_Лаукарт_МС_2026-04-12.docx"""
+    parts = ["Заключение"]
+    if lead_name:
+        parts.append(abbreviate_name(lead_name).replace(" ", "_").replace(".", ""))
+    if date:
+        parts.append(date.strftime("%Y-%m-%d"))
+    return "_".join(parts) + ".docx"
 
 
 def _replace_in_paragraph(para, replacements: dict) -> None:
     """
-    Merge all runs of a paragraph into a single text string,
-    apply replacements, then redistribute back into runs
-    preserving the formatting of the first run.
+    Плейсхолдер может быть разбит Word'ом на несколько run'ов. Склеиваем текст
+    абзаца, делаем замены и кладём результат в первый run (его форматирование сохраняется).
     """
-    full_text = "".join(r.text for r in para.runs)
+    runs = para.runs
+    if not runs:
+        return
+    full_text = "".join(r.text for r in runs)
+    if "[" not in full_text:
+        return
     new_text = full_text
     for placeholder, value in replacements.items():
         new_text = new_text.replace(placeholder, value)
-
     if new_text == full_text:
         return
-
-    for run in para.runs:
+    runs[0].text = new_text
+    for run in runs[1:]:
         run.text = ""
 
-    if para.runs:
-        para.runs[0].text = new_text
+
+def _walk_container(container, replacements: dict) -> None:
+    for para in container.paragraphs:
+        _replace_in_paragraph(para, replacements)
+    for table in container.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                _walk_container(cell, replacements)
+
+
+def build_replacements(article_title: str, author_names: List[str], upload_date: datetime,
+                       lead_author_name: Optional[str] = None) -> dict:
+    month_name = MONTHS_GENITIVE[upload_date.month]
+    year_str = str(upload_date.year)
+    abbreviated = [abbreviate_name(n) for n in author_names]
+    authors_str = ", ".join(abbreviated) if abbreviated else "—"
+    suffix = "а" if len(author_names) == 1 else "ов"
+    lead = lead_author_name or (author_names[0] if author_names else None)
+    lead_str = abbreviate_name(lead) if lead else "—"
+    return {
+        "[месяц_загрузки]": month_name, "[Месяц_загрузки]": month_name,
+        "[год_загрузки]": year_str, "[Год_загрузки]": year_str,
+        "[название_статьи]": article_title, "[имя статьи]": article_title,
+        "[ФИО_авторов]": authors_str,
+        "[окончание_автор]": suffix, "[а|ов]": suffix,
+        "[главный_автор]": lead_str,
+    }
 
 
 def generate_conclusion(
@@ -77,57 +103,20 @@ def generate_conclusion(
     author_names: List[str],
     upload_date: datetime,
     lead_author_name: Optional[str] = None,
-    template_path=None,
+    template_bytes: Optional[bytes] = None,
 ) -> bytes:
-    """
-    Fill the conclusion template and return the resulting DOCX as bytes.
-    Uses template_path if provided, otherwise falls back to built-in template.
-    """
-    doc = Document(str(template_path or BUILTIN_TEMPLATE_PATH))
+    """Заполнить шаблон и вернуть готовый DOCX. Без шаблона — встроенный."""
+    source = io.BytesIO(template_bytes) if template_bytes else str(BUILTIN_TEMPLATE_PATH)
+    doc = Document(source)
+    replacements = build_replacements(article_title, author_names, upload_date, lead_author_name)
 
-    month_name = MONTHS_GENITIVE[upload_date.month]
-    year_str = str(upload_date.year)
-
-    # Abbreviated author names: Лаукарт М.С., Яссер М.В.
-    abbreviated = [abbreviate_name(n) for n in author_names] if author_names else []
-    authors_str = ", ".join(abbreviated) if abbreviated else "—"
-
-    # Suffix: "а" for 1 author, "ов" for 2+
-    author_suffix = "а" if len(author_names) == 1 else "ов"
-
-    # Lead author
-    if lead_author_name:
-        lead_str = abbreviate_name(lead_author_name)
-    elif author_names:
-        lead_str = abbreviate_name(author_names[0])
-    else:
-        lead_str = "—"
-
-    replacements = {
-        # New placeholders
-        "[месяц_загрузки]": month_name,
-        "[год_загрузки]": year_str,
-        "[название_статьи]": article_title,
-        "[ФИО_авторов]": authors_str,
-        "[окончание_автор]": author_suffix,
-        "[главный_автор]": lead_str,
-        # Legacy placeholders (backward compatibility)
-        "[Месяц_загрузки]": month_name,
-        "[Год_загрузки]": year_str,
-        "[имя статьи]": article_title,
-        "[а|ов]": author_suffix,
-    }
-
-    for para in doc.paragraphs:
-        _replace_in_paragraph(para, replacements)
-
-    for table in doc.tables:
-        for row in table.rows:
-            for cell in row.cells:
-                for para in cell.paragraphs:
-                    _replace_in_paragraph(para, replacements)
+    _walk_container(doc, replacements)
+    for section in doc.sections:
+        for part in (section.header, section.footer, section.first_page_header,
+                     section.first_page_footer, section.even_page_header, section.even_page_footer):
+            if part is not None and not part.is_linked_to_previous:
+                _walk_container(part, replacements)
 
     buf = io.BytesIO()
     doc.save(buf)
-    buf.seek(0)
-    return buf.read()
+    return buf.getvalue()

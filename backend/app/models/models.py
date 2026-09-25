@@ -1,6 +1,8 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Table, Boolean, Date, BigInteger
+from sqlalchemy import Column, Integer, String, Text, ForeignKey, Table, Boolean, Date, BigInteger, UniqueConstraint
+import json
+from datetime import date
+
 from sqlalchemy.orm import relationship
-from sqlalchemy.sql import func
 from app.db.base import Base, TimestampMixin
 
 # ── Many-to-many: authors ↔ articles / proposals / software ─────────────────
@@ -42,10 +44,11 @@ class Author(Base, TimestampMixin):
     organization = Column(String(500))
     position = Column(String(255))
 
-    articles = relationship("Article", secondary=article_authors, back_populates="authors")
-    proposals = relationship("Proposal", secondary=proposal_authors, back_populates="authors")
-    software = relationship("Software", secondary=software_authors, back_populates="authors")
-    conferences = relationship("Conference", secondary=conference_participants, back_populates="participants")
+    articles = relationship("Article", secondary=article_authors, back_populates="authors", passive_deletes=True)
+    proposals = relationship("Proposal", secondary=proposal_authors, back_populates="authors", passive_deletes=True)
+    software = relationship("Software", secondary=software_authors, back_populates="authors", passive_deletes=True)
+    conferences = relationship("Conference", secondary=conference_participants, back_populates="participants",
+                               passive_deletes=True)
 
 
 # ── Collection (Сборник) ──────────────────────────────────────────────────────
@@ -62,7 +65,16 @@ class Collection(Base, TimestampMixin):
     photo_path = Column(String(500))
     description = Column(Text)
 
-    articles = relationship("Article", back_populates="collection")
+    articles = relationship("Article", back_populates="collection", passive_deletes=True)
+
+    @property
+    def photo_url(self):
+        from app.api.common import photo_url
+        return photo_url(self.photo_path)
+
+    @property
+    def is_past(self):
+        return self.date_end < date.today() if self.date_end else None
 
 
 # ── Article (Научная статья) ──────────────────────────────────────────────────
@@ -83,9 +95,26 @@ class Article(Base, TimestampMixin):
     lead_author_id = Column(Integer, ForeignKey("authors.id", ondelete="SET NULL"), nullable=True)
 
     collection = relationship("Collection", back_populates="articles")
-    authors = relationship("Author", secondary=article_authors, back_populates="articles")
-    conclusion = relationship("Conclusion", back_populates="article", uselist=False)
+    authors = relationship("Author", secondary=article_authors, back_populates="articles", passive_deletes=True)
+    conclusion = relationship("Conclusion", back_populates="article", uselist=False,
+                              cascade="all, delete-orphan", passive_deletes=True)
     lead_author = relationship("Author", foreign_keys=[lead_author_id])
+
+    @property
+    def has_file(self):
+        return bool(self.file_path)
+
+    @property
+    def has_conclusion(self):
+        return self.conclusion is not None
+
+    @property
+    def conclusion_has_file(self):
+        return bool(self.conclusion and self.conclusion.file_path)
+
+    @property
+    def conclusion_generated(self):
+        return bool(self.conclusion and self.conclusion.generated_from_template)
 
 
 # ── Proposal (Рац предложение) ────────────────────────────────────────────────
@@ -102,8 +131,13 @@ class Proposal(Base, TimestampMixin):
     file_size_original = Column(BigInteger, default=0)
     file_size_compressed = Column(BigInteger, default=0)
 
-    authors = relationship("Author", secondary=proposal_authors, back_populates="proposals")
-    certificate = relationship("ProposalCertificate", back_populates="proposal", uselist=False)
+    authors = relationship("Author", secondary=proposal_authors, back_populates="proposals", passive_deletes=True)
+    certificate = relationship("ProposalCertificate", back_populates="proposal", uselist=False,
+                               cascade="all, delete-orphan", passive_deletes=True)
+
+    @property
+    def has_file(self):
+        return bool(self.file_path)
 
 
 # ── Software (Программное обеспечение) ────────────────────────────────────────
@@ -123,8 +157,28 @@ class Software(Base, TimestampMixin):
     file_structure = Column(Text)
 
     collection = relationship("Collection")
-    authors = relationship("Author", secondary=software_authors, back_populates="software")
-    documents = relationship("SoftwareDocument", back_populates="software")
+    authors = relationship("Author", secondary=software_authors, back_populates="software", passive_deletes=True)
+    documents = relationship("SoftwareDocument", back_populates="software", cascade="all, delete-orphan",
+                             passive_deletes=True,
+                             order_by="SoftwareDocument.id")
+
+    @property
+    def has_file(self):
+        return bool(self.file_path)
+
+    @property
+    def tree(self):
+        try:
+            return json.loads(self.file_structure) if self.file_structure else []
+        except ValueError:
+            return []
+
+    @property
+    def files_count(self):
+        if not self.file_structure:
+            return None
+        from app.services.file_service import count_tree_files
+        return count_tree_files(self.tree)
 
 
 # ── Conclusion ────────────────────────────────────────────────────────────────
@@ -143,6 +197,10 @@ class Conclusion(Base, TimestampMixin):
     article = relationship("Article", back_populates="conclusion")
     template = relationship("DocumentTemplate")
 
+    @property
+    def has_file(self):
+        return bool(self.file_path)
+
 
 # ── ProposalCertificate (Свидетельство для рац. предложения) ──────────────────
 
@@ -159,7 +217,7 @@ class ProposalCertificate(Base, TimestampMixin):
     proposal = relationship("Proposal", back_populates="certificate")
 
 
-
+# ── SoftwareDocument (комплект документов ПО) ─────────────────────────────────
 
 class SoftwareDocument(Base, TimestampMixin):
     __tablename__ = "software_documents"
@@ -187,6 +245,10 @@ class DocumentTemplate(Base, TimestampMixin):
     description = Column(Text)
     is_active = Column(Boolean, default=True)
 
+    @property
+    def has_file(self):
+        return bool(self.file_path)
+
 
 # ── Conference ────────────────────────────────────────────────────────────────
 
@@ -205,4 +267,21 @@ class Conference(Base, TimestampMixin):
     is_online = Column(Boolean, default=False)
     source = Column(String(100), default="manual")
 
-    participants = relationship("Author", secondary=conference_participants, back_populates="conferences")
+    participants = relationship("Author", secondary=conference_participants, back_populates="conferences",
+                                passive_deletes=True)
+
+    @property
+    def photo_url(self):
+        from app.api.common import photo_url
+        return photo_url(self.photo_path)
+
+
+# ── Catalog (папки хранения для статей / рац. предложений / ПО) ───────────────
+
+class Catalog(Base, TimestampMixin):
+    __tablename__ = "catalogs"
+    __table_args__ = (UniqueConstraint("scope", "name"),)
+
+    id = Column(Integer, primary_key=True)
+    scope = Column(String(32), nullable=False)
+    name = Column(String(500), nullable=False)

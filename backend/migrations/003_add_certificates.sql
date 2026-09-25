@@ -13,6 +13,10 @@ CREATE TABLE IF NOT EXISTS proposal_certificates (
 CREATE INDEX IF NOT EXISTS idx_proposal_certificates_proposal ON proposal_certificates(proposal_id);
 
 -- Add certificate doc type to software seed data
+-- (раньше здесь было INSERT ... ON CONFLICT DO NOTHING без уникального ключа,
+-- и файл выполнялся при каждом старте — строка дублировалась при каждой перезагрузке)
 INSERT INTO document_templates (name, doc_type, description, is_active)
-VALUES ('Свидетельство о государственной регистрации', 'certificate', 'Свидетельство о регистрации ПО', TRUE)
-ON CONFLICT DO NOTHING;
+SELECT 'Свидетельство о государственной регистрации', 'certificate', 'Свидетельство о регистрации ПО', TRUE
+WHERE NOT EXISTS (
+  SELECT 1 FROM document_templates WHERE name = 'Свидетельство о государственной регистрации' AND doc_type = 'certificate'
+);

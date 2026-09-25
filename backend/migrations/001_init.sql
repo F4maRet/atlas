@@ -1,6 +1,5 @@
 -- СНД «АТЛАС» — инициализация базы данных
 
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- Authors
 CREATE TABLE IF NOT EXISTS authors (
@@ -178,15 +177,19 @@ CREATE INDEX IF NOT EXISTS idx_proposal_certificates_proposal ON proposal_certif
 CREATE INDEX IF NOT EXISTS idx_conf_participants_conf ON conference_participants(conference_id);
 CREATE INDEX IF NOT EXISTS idx_conf_participants_author ON conference_participants(author_id);
 
--- Seed default document templates
+-- Seed default document templates (идемпотентно: вставляем только отсутствующие)
 INSERT INTO document_templates (name, doc_type, description, is_active)
-VALUES
-  ('Заключение об открытом публиковании (стандарт)', 'conclusion', 'Стандартный шаблон заключения', TRUE),
-  ('Аннотация программы', 'annotation', 'Шаблон аннотации для ПО', TRUE),
-  ('Заявление на регистрацию', 'registration', 'Заявление на регистрацию ПО', TRUE),
-  ('Описание программы', 'description', 'Техническое описание программы', TRUE),
-  ('Руководство пользователя', 'manual', 'Руководство пользователя', TRUE),
-  ('Акт приёма и ввода в эксплуатацию', 'act', 'Акт для ввода ПО в эксплуатацию', TRUE),
-  ('Реферат по исходникам', 'abstract', 'Реферат исходного кода', TRUE),
-  ('Листинг по исходникам', 'listing', 'Листинг исходного кода', TRUE)
-ON CONFLICT DO NOTHING;
+SELECT v.name, v.doc_type, v.description, TRUE
+FROM (VALUES
+  ('Заключение об открытом публиковании (стандарт)', 'conclusion', 'Стандартный шаблон заключения'),
+  ('Аннотация программы', 'annotation', 'Шаблон аннотации для ПО'),
+  ('Заявление на регистрацию', 'registration', 'Заявление на регистрацию ПО'),
+  ('Описание программы', 'description', 'Техническое описание программы'),
+  ('Руководство пользователя', 'manual', 'Руководство пользователя'),
+  ('Акт приёма и ввода в эксплуатацию', 'act', 'Акт для ввода ПО в эксплуатацию'),
+  ('Реферат по исходникам', 'abstract', 'Реферат исходного кода'),
+  ('Листинг по исходникам', 'listing', 'Листинг исходного кода')
+) AS v(name, doc_type, description)
+WHERE NOT EXISTS (
+  SELECT 1 FROM document_templates t WHERE t.name = v.name AND t.doc_type = v.doc_type
+);

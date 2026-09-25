@@ -1,16 +1,29 @@
-from pydantic import BaseModel, field_validator
-from typing import Optional, List, Any
-from datetime import datetime, date
+from datetime import date, datetime
+from typing import Any, List, Optional
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+class ORM(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ── Author ────────────────────────────────────────────────────────────────────
 
 class AuthorBase(BaseModel):
-    full_name: str
-    short_name: Optional[str] = None
-    email: Optional[str] = None
-    organization: Optional[str] = None
-    position: Optional[str] = None
+    full_name: str = Field(max_length=255)
+    short_name: Optional[str] = Field(None, max_length=100)
+    email: Optional[str] = Field(None, max_length=255)
+    organization: Optional[str] = Field(None, max_length=500)
+    position: Optional[str] = Field(None, max_length=255)
+
+    @field_validator("full_name", "short_name", "email", "organization", "position", mode="before")
+    @classmethod
+    def _strip(cls, v):
+        if isinstance(v, str):
+            v = " ".join(v.split())
+            return v or None
+        return v
 
 
 class AuthorCreate(AuthorBase):
@@ -18,233 +31,170 @@ class AuthorCreate(AuthorBase):
 
 
 class AuthorUpdate(AuthorBase):
-    full_name: Optional[str] = None
+    full_name: Optional[str] = Field(None, max_length=255)
 
 
-class AuthorOut(AuthorBase):
+class AuthorOut(AuthorBase, ORM):
     id: int
     created_at: datetime
-
-    class Config:
-        from_attributes = True
 
 
 class AuthorStats(AuthorOut):
     articles_count: int = 0
     proposals_count: int = 0
     software_count: int = 0
+    conferences_count: int = 0
     total: int = 0
+
+
+class AuthorMerge(BaseModel):
+    into_id: int
+
+
+class WorkItem(BaseModel):
+    type: str
+    id: int
+    title: str
+    subtitle: Optional[str] = None
+    date: Optional[date | datetime] = None
+
+
+class AuthorWorks(BaseModel):
+    author: AuthorOut
+    articles: List[WorkItem] = []
+    proposals: List[WorkItem] = []
+    software: List[WorkItem] = []
+    conferences: List[WorkItem] = []
 
 
 # ── Collection ────────────────────────────────────────────────────────────────
 
-class CollectionBase(BaseModel):
+class CollectionBrief(ORM):
+    id: int
+    name: str
+
+
+class CollectionOut(ORM):
+    id: int
     name: str
     university: Optional[str] = None
     date_start: Optional[date] = None
     date_end: Optional[date] = None
     url: Optional[str] = None
     description: Optional[str] = None
-
-
-class CollectionCreate(CollectionBase):
-    pass
-
-
-class CollectionUpdate(CollectionBase):
-    name: Optional[str] = None
-
-
-class CollectionOut(CollectionBase):
-    id: int
-    photo_path: Optional[str] = None
+    photo_url: Optional[str] = None
     created_at: datetime
     is_past: Optional[bool] = None
-
-    class Config:
-        from_attributes = True
+    articles_count: int = 0
 
 
 # ── Article ───────────────────────────────────────────────────────────────────
 
-class ArticleBase(BaseModel):
+class ArticleOut(ORM):
+    id: int
     title: str
     article_type: Optional[str] = None
     collection_id: Optional[int] = None
     catalog: Optional[str] = None
-    author_ids: List[int] = []
-
-
-class ArticleCreate(ArticleBase):
-    pass
-
-
-class ArticleUpdate(ArticleBase):
-    title: Optional[str] = None
-    author_ids: Optional[List[int]] = None
-
-
-class ArticleOut(BaseModel):
-    id: int
-    title: str
-    article_type: Optional[str]
-    collection_id: Optional[int]
-    catalog: Optional[str]
-    file_path: Optional[str]
-    original_filename: Optional[str]
-    file_size_original: int
-    file_size_compressed: int
-    preview_path: Optional[str]
+    original_filename: Optional[str] = None
+    file_size_original: int = 0
+    file_size_compressed: int = 0
+    has_file: bool = False
     created_at: datetime
     lead_author_id: Optional[int] = None
     authors: List[AuthorOut] = []
-    collection: Optional[CollectionOut] = None
+    collection: Optional[CollectionBrief] = None
     has_conclusion: bool = False
-
-    class Config:
-        from_attributes = True
+    conclusion_has_file: bool = False
+    conclusion_generated: bool = False
 
 
 # ── Proposal ──────────────────────────────────────────────────────────────────
 
-class ProposalBase(BaseModel):
+class ProposalCertificateOut(ORM):
+    id: int
+    proposal_id: int
+    original_filename: Optional[str] = None
+    file_size_original: int = 0
+    file_size_compressed: int = 0
+    created_at: datetime
+
+
+class ProposalOut(ORM):
+    id: int
     title: str
     proposal_type: Optional[str] = None
     catalog: Optional[str] = None
-    author_ids: List[int] = []
-
-
-class ProposalCreate(ProposalBase):
-    pass
-
-
-class ProposalUpdate(ProposalBase):
-    title: Optional[str] = None
-    author_ids: Optional[List[int]] = None
-
-
-class ProposalCertificateOut(BaseModel):
-    id: int
-    proposal_id: int
-    file_path: Optional[str]
-    original_filename: Optional[str]
-    file_size_original: int
-    file_size_compressed: int
-    created_at: datetime
-
-    class Config:
-        from_attributes = True
-
-
-class ProposalOut(BaseModel):
-    id: int
-    title: str
-    proposal_type: Optional[str]
-    catalog: Optional[str]
-    file_path: Optional[str]
-    original_filename: Optional[str]
-    file_size_original: int
-    file_size_compressed: int
+    original_filename: Optional[str] = None
+    file_size_original: int = 0
+    file_size_compressed: int = 0
+    has_file: bool = False
     created_at: datetime
     authors: List[AuthorOut] = []
     certificate: Optional[ProposalCertificateOut] = None
 
-    class Config:
-        from_attributes = True
-
 
 # ── Software ──────────────────────────────────────────────────────────────────
 
-class SoftwareBase(BaseModel):
+class SoftwareDocumentOut(ORM):
+    id: int
+    doc_type: str
+    original_filename: Optional[str] = None
+    file_size_original: int = 0
+    file_size_compressed: int = 0
+    created_at: datetime
+
+
+class SoftwareOut(ORM):
+    id: int
     title: str
     software_type: Optional[str] = None
     collection_id: Optional[int] = None
     catalog: Optional[str] = None
-    author_ids: List[int] = []
-
-
-class SoftwareCreate(SoftwareBase):
-    pass
-
-
-class SoftwareUpdate(SoftwareBase):
-    title: Optional[str] = None
-    author_ids: Optional[List[int]] = None
-
-
-class SoftwareDocumentOut(BaseModel):
-    id: int
-    doc_type: str
-    file_path: Optional[str]
-    original_filename: Optional[str]
-    file_size_original: int
-    file_size_compressed: int
-    created_at: datetime
-
-    class Config:
-        from_attributes = True
-
-
-class SoftwareOut(BaseModel):
-    id: int
-    title: str
-    software_type: Optional[str]
-    collection_id: Optional[int]
-    catalog: Optional[str]
-    file_path: Optional[str]
-    original_filename: Optional[str]
-    file_size_original: int
-    file_size_compressed: int
-    file_structure: Optional[Any]
+    original_filename: Optional[str] = None
+    file_size_original: int = 0
+    file_size_compressed: int = 0
+    has_file: bool = False
+    files_count: Optional[int] = None
     created_at: datetime
     authors: List[AuthorOut] = []
     documents: List[SoftwareDocumentOut] = []
 
-    class Config:
-        from_attributes = True
+
+class SoftwareStructure(BaseModel):
+    id: int
+    tree: List[Any] = []
 
 
 # ── Conclusion ────────────────────────────────────────────────────────────────
 
-class ConclusionOut(BaseModel):
+class ConclusionOut(ORM):
     id: int
     article_id: int
-    file_path: Optional[str]
     original_filename: Optional[str] = None
-    generated_from_template: bool
-    template_id: Optional[int]
-    notes: Optional[str]
+    has_file: bool = False
+    generated_from_template: bool = False
+    template_id: Optional[int] = None
+    notes: Optional[str] = None
     created_at: datetime
-
-    class Config:
-        from_attributes = True
 
 
 # ── DocumentTemplate ──────────────────────────────────────────────────────────
 
-class TemplateBase(BaseModel):
+class TemplateOut(ORM):
+    id: int
     name: str
-    doc_type: str
+    doc_type: Optional[str] = None
     description: Optional[str] = None
     is_active: bool = True
-
-
-class TemplateCreate(TemplateBase):
-    pass
-
-
-class TemplateOut(TemplateBase):
-    id: int
-    file_path: Optional[str]
+    has_file: bool = False
     created_at: datetime
-
-    class Config:
-        from_attributes = True
 
 
 # ── Conference ────────────────────────────────────────────────────────────────
 
-class ConferenceBase(BaseModel):
+class ConferenceOut(ORM):
+    id: int
     title: str
     organizer: Optional[str] = None
     date_start: Optional[date] = None
@@ -253,25 +203,27 @@ class ConferenceBase(BaseModel):
     description: Optional[str] = None
     location: Optional[str] = None
     is_online: bool = False
-
-
-class ConferenceCreate(ConferenceBase):
-    pass
-
-
-class ConferenceUpdate(ConferenceBase):
-    title: Optional[str] = None
-
-
-class ConferenceOut(ConferenceBase):
-    id: int
-    photo_path: Optional[str]
-    source: str
+    photo_url: Optional[str] = None
+    source: Optional[str] = "manual"
     created_at: datetime
     participants: List[AuthorOut] = []
 
-    class Config:
-        from_attributes = True
+
+# ── Catalogs ──────────────────────────────────────────────────────────────────
+
+class CatalogOut(BaseModel):
+    name: str
+    count: int = 0
+
+
+class CatalogCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=500)
+
+
+
+class CatalogMove(BaseModel):
+    ids: List[int]
+    catalog: Optional[str] = None  # None / "" — убрать из каталога
 
 
 # ── Reports ───────────────────────────────────────────────────────────────────
@@ -280,6 +232,14 @@ class PublicationPlanItem(BaseModel):
     type: str  # article | proposal | software
     id: int
     title: str
+    subtype: Optional[str] = None
     authors: List[str]
-    collection_name: Optional[str]
+    collection_name: Optional[str] = None
     created_at: datetime
+
+
+class SearchHit(BaseModel):
+    type: str
+    id: int
+    title: str
+    subtitle: Optional[str] = None
