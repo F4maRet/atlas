@@ -84,7 +84,17 @@ async def _seed_conclusion_template() -> None:
 async def lifespan(app: FastAPI):
     settings.warn_insecure()
     ensure_dirs()
-    applied = await run_migrations(engine)
+    try:
+        applied = await run_migrations(engine)
+    except Exception as exc:
+        if type(exc).__name__ == "InvalidPasswordError":
+            logger.error(
+                "Не удалось войти в PostgreSQL: неверный пароль. POSTGRES_PASSWORD из .env применяется "
+                "только при первом создании базы — если том с данными уже существовал, верните прежний "
+                "пароль, смените его командой ALTER USER или пересоздайте базу (docker compose down -v, "
+                "ВСЕ ДАННЫЕ БУДУТ УДАЛЕНЫ). Подробнее — README, раздел «Частые проблемы»."
+            )
+        raise
     if applied:
         logger.info("Применены миграции: %s", ", ".join(applied))
     await _seed_conclusion_template()

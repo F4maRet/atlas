@@ -89,6 +89,23 @@ docker compose up --build -d
 
 ---
 
+## Частые проблемы
+
+**`password authentication failed for user "atlas_user"`** — пароль `POSTGRES_PASSWORD`
+применяется только при *первом* создании базы. Если том с данными уже существовал
+(например, от прошлой версии с паролем по умолчанию `atlas_pass`), то:
+
+- вернуть прежний пароль в `.env`, **или**
+- сменить пароль в самой базе:
+  `docker compose exec db psql -U atlas_user -d atlas -c "ALTER USER atlas_user PASSWORD 'новый';"`, **или**
+- пересоздать базу, если данные не нужны: `docker compose down -v && docker compose up -d`
+  (**удаляет все данные и файлы**).
+
+**Backend сразу падает на Windows (`required file not found`)** — обновите репозиторий
+(`git pull`) и пересоберите образы: `docker compose up --build -d`.
+
+---
+
 ## Резервное копирование
 
 ```bash
