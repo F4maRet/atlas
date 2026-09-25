@@ -45,9 +45,13 @@ _SAFE_HREF = re.compile(r"^(https?:|mailto:|#)", re.I)
 
 def safe_content_disposition(disposition: str, filename: str) -> str:
     """Content-Disposition с поддержкой кириллицы (RFC 6266 / RFC 5987)."""
-    ascii_fallback = filename.encode("ascii", "ignore").decode().replace('"', "").strip() or "file"
-    if "." in filename and "." not in ascii_fallback:
-        ascii_fallback += file_ext(filename)
+    # Запасное ASCII-имя для старых клиентов; если от имени ничего не осталось — «document.ext»
+    ext = file_ext(filename)
+    stem = filename[: -len(ext)] if ext else filename
+    ascii_stem = re.sub(r"[^A-Za-z0-9._-]+", "_", stem.encode("ascii", "ignore").decode()).strip("._-")
+    if not re.search(r"[A-Za-z0-9]", ascii_stem):
+        ascii_stem = "document"
+    ascii_fallback = ascii_stem + ext.encode("ascii", "ignore").decode()
     return f"{disposition}; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quote(filename, safe='')}"
 
 
