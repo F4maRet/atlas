@@ -1,0 +1,6 @@
+# Скрипты и конфиги, которые выполняются внутри Linux-контейнеров, всегда с LF —
+# иначе на Windows (core.autocrlf=true) контейнер не стартует: «/bin/sh^M: not found»
+*.sh          text eol=lf
+*.sql         text eol=lf
+Dockerfile    text eol=lf
+*.conf        text eol=lf

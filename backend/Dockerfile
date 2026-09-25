@@ -14,6 +14,9 @@ COPY app ./app
 COPY migrations ./migrations
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
+# sed убирает CR, если репозиторий клонирован на Windows с CRLF (иначе контейнер не стартует)
+RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh && chmod +x /usr/local/bin/docker-entrypoint.sh
+
 # Приложение работает не от root (entrypoint сбрасывает привилегии)
 RUN useradd --create-home --uid 1000 atlas \
     && mkdir -p /app/uploads && chown -R atlas:atlas /app/uploads
