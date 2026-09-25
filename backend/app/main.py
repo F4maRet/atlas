@@ -1,164 +1,154 @@
-from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import JSONResponse
-from starlette.middleware.base import BaseHTTPMiddleware
+import logging
 from contextlib import asynccontextmanager
-import os
 
-from app.core.config import settings
-from app.core.security import verify_session_token, SESSION_COOKIE_NAME
-from app.db.session import engine
-from app.db.base import Base
+import sqlalchemy as sa
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
+from sqlalchemy.exc import IntegrityError
+from starlette.middleware.base import BaseHTTPMiddleware
+
 from app.api.v1.router import api_router
+from app.core.config import settings
+from app.core.security import is_authenticated
+from app.db.migrate import mark_once, run_migrations
+from app.db.session import AsyncSessionLocal, engine
+from app.services.file_service import IMAGE_EXT, ensure_dirs, file_ext
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logger = logging.getLogger("atlas")
+
+CONCLUSION_TEMPLATE_NAME = "Заключение об открытом опубликовании"
 
 
-class UploadsAuthMiddleware(BaseHTTPMiddleware):
-    """/uploads is served via StaticFiles, which bypasses FastAPI's Depends()
-    system entirely — so the same session-cookie check used everywhere else
-    has to be applied here separately, or uploaded files would stay world
-    readable to anyone who can guess/observe a file path."""
+class SecurityMiddleware(BaseHTTPMiddleware):
+    """
+    * /uploads отдаётся StaticFiles, мимо Depends() — поэтому проверка сессии здесь.
+      Напрямую отдаются только изображения (обложки сборников/конференций):
+      документы доступны лишь через API, где они распаковываются и получают
+      правильный Content-Disposition. Это же не даёт отдать загруженный .html
+      как страницу с того же origin (stored XSS).
+    * Базовые защитные заголовки для всех ответов.
+    """
 
     async def dispatch(self, request: Request, call_next):
-        if request.url.path.startswith("/uploads"):
-            token = request.cookies.get(SESSION_COOKIE_NAME)
-            if not verify_session_token(token or ""):
+        if request.url.path.startswith("/uploads/"):
+            if not is_authenticated(request):
                 return JSONResponse({"detail": "Требуется вход в систему"}, status_code=401)
-        return await call_next(request)
+            if file_ext(request.url.path) not in IMAGE_EXT:
+                return JSONResponse({"detail": "Не найдено"}, status_code=404)
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("Referrer-Policy", "same-origin")
+        response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+        return response
 
 
-async def _seed_conclusion_template():
+async def _seed_conclusion_template() -> None:
     """
-    Ensure the built-in conclusion template is registered in document_templates.
-    If a row with doc_type='conclusion' and name='Заключение об открытом опубликовании' exists,
-    do nothing. Otherwise copy the .docx into the uploads/templates directory and insert a row.
+    Один раз регистрирует встроенный шаблон заключения в «Шаблонах документов».
+    Раньше это делалось при каждом старте — удалённый пользователем шаблон
+    появлялся снова. Теперь факт посева запоминается в schema_migrations.
     """
-    import shutil
-    import sqlalchemy as sa
-    from pathlib import Path
-    from app.db.session import AsyncSessionLocal
     from app.models.models import DocumentTemplate
+    from app.services.conclusion_service import BUILTIN_TEMPLATE_PATH
+    from app.services.file_service import copy_builtin
 
-    builtin_src = Path("/app/backend/app/templates/conclusion_template.docx")
-    # Also check relative path for dev environments
-    fallback_src = Path(__file__).parent / "templates" / "conclusion_template.docx"
-    src = builtin_src if builtin_src.exists() else fallback_src
-
-    dest_dir = os.path.join(settings.UPLOAD_DIR, "templates")
-    os.makedirs(dest_dir, exist_ok=True)
-    dest = os.path.join(dest_dir, "conclusion_template.docx")
-
-    TEMPLATE_NAME = "Заключение об открытом опубликовании"
-
+    if not await mark_once(engine, "seed:conclusion_template"):
+        return
     async with AsyncSessionLocal() as db:
-        result = await db.execute(
+        existing = await db.scalar(
             sa.select(DocumentTemplate).where(
-                DocumentTemplate.doc_type == "conclusion",
-                DocumentTemplate.name == TEMPLATE_NAME,
+                DocumentTemplate.doc_type == "conclusion", DocumentTemplate.name == CONCLUSION_TEMPLATE_NAME
             )
         )
-        existing = result.scalar_one_or_none()
-        if existing:
-            # Make sure the physical file is in place (might have been lost on volume re-create)
-            if src.exists() and not os.path.exists(dest):
-                shutil.copy2(str(src), dest)
+        if existing and existing.file_path:
             return
-
-        # Copy physical file
-        if src.exists():
-            shutil.copy2(str(src), dest)
-            file_path = dest
+        file_path = copy_builtin(BUILTIN_TEMPLATE_PATH, "templates") if BUILTIN_TEMPLATE_PATH.exists() else None
+        if existing:
+            existing.file_path = file_path
         else:
-            file_path = None
-
-        tmpl = DocumentTemplate(
-            name=TEMPLATE_NAME,
-            doc_type="conclusion",
-            description=(
-                "Официальный шаблон заключения об открытом опубликовании. "
-                "Используется при автоматической генерации документа для статьи."
-            ),
-            file_path=file_path,
-            is_active=True,
-        )
-        db.add(tmpl)
+            db.add(DocumentTemplate(
+                name=CONCLUSION_TEMPLATE_NAME,
+                doc_type="conclusion",
+                description="Официальный шаблон заключения. Используется при автоматической генерации документа для статьи.",
+                file_path=file_path,
+                is_active=True,
+            ))
         await db.commit()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: create upload dirs
-    os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
-    for subdir in ["articles", "proposals", "software", "documents", "previews", "templates"]:
-        os.makedirs(os.path.join(settings.UPLOAD_DIR, subdir), exist_ok=True)
-
-    # Run safe schema patches (idempotent — every statement uses IF NOT EXISTS).
-    #
-    # init.sql only runs once, when Postgres creates a brand-new data volume.
-    # Deployments that already have data won't see new columns/tables added to
-    # init.sql later — so every patch file below is also re-applied on every
-    # startup, which keeps existing installations in sync without recreating
-    # the volume. (This is also what backfills schema that earlier versions
-    # of init.sql were missing entirely — see migrations/add_*.sql.)
-    from app.db.session import engine
-    from pathlib import Path
-    import sqlalchemy as sa
-    import logging
-
-    migrations_dir = Path(__file__).parent.parent / "migrations"
-    patch_files = [
-        "add_lead_author.sql",
-        "add_certificates.sql",
-        "add_conference_participants.sql",
-        "add_conclusion_filename.sql",
-    ]
-
-    async with engine.begin() as conn:
-        for fname in patch_files:
-            fpath = migrations_dir / fname
-            if not fpath.exists():
-                continue
-            sql_text = fpath.read_text(encoding="utf-8")
-            for raw_statement in sql_text.split(";"):
-                # strip SQL line comments before checking if anything is left
-                lines = [l for l in raw_statement.splitlines() if not l.strip().startswith("--")]
-                statement = "\n".join(lines).strip()
-                if not statement:
-                    continue
-                try:
-                    await conn.execute(sa.text(statement))
-                except Exception as e:
-                    logging.warning(f"Migration patch skipped ({fname}): {e}")
-
-    # Seed built-in conclusion template into document_templates if absent
+    settings.warn_insecure()
+    ensure_dirs()
+    try:
+        applied = await run_migrations(engine)
+    except Exception as exc:
+        if type(exc).__name__ == "InvalidPasswordError":
+            logger.error(
+                "Не удалось войти в PostgreSQL: неверный пароль. POSTGRES_PASSWORD из .env применяется "
+                "только при первом создании базы — если том с данными уже существовал, верните прежний "
+                "пароль, смените его командой ALTER USER или пересоздайте базу (docker compose down -v, "
+                "ВСЕ ДАННЫЕ БУДУТ УДАЛЕНЫ). Подробнее — README, раздел «Частые проблемы»."
+            )
+        raise
+    if applied:
+        logger.info("Применены миграции: %s", ", ".join(applied))
     await _seed_conclusion_template()
-
     yield
-    # Shutdown
+    await engine.dispose()
 
 
 app = FastAPI(
     title="СНД «АТЛАС»",
     description="Автоматизированная система научной деятельности",
-    version="1.0.0",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
+app.add_middleware(SecurityMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.ALLOWED_ORIGINS,
+    allow_origins=settings.allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-app.add_middleware(UploadsAuthMiddleware)
 
-# Serve uploaded files
+
+@app.exception_handler(IntegrityError)
+async def integrity_error_handler(request: Request, exc: IntegrityError):
+    logger.warning("IntegrityError: %s", exc.orig)
+    return JSONResponse({"detail": "Операция нарушает целостность данных (дубликат или несуществующая ссылка)"},
+                        status_code=409)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(request: Request, exc: RequestValidationError):
+    msgs = []
+    for err in exc.errors():
+        field = ".".join(str(x) for x in err.get("loc", [])[1:]) or "запрос"
+        msgs.append(f"{field}: {err.get('msg')}")
+    return JSONResponse({"detail": "; ".join(msgs) or "Некорректный запрос"}, status_code=422)
+
+
+ensure_dirs()
 app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR), name="uploads")
-
 app.include_router(api_router, prefix="/api/v1")
 
 
 @app.get("/health")
 async def health_check():
-    return {"status": "ok", "service": "atlas-backend"}
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(sa.text("SELECT 1"))
+        db_ok = True
+    except Exception:
+        db_ok = False
+    return JSONResponse(
+        {"status": "ok" if db_ok else "degraded", "database": db_ok, "service": "atlas-backend"},
+        status_code=200 if db_ok else 503,
+    )

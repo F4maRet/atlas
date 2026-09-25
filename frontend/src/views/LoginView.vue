@@ -2,10 +2,10 @@
   <div class="login-screen">
     <form class="login-card" @submit.prevent="submit">
       <div class="login-card__logo">
-        <span class="login-card__logo-icon">⬡</span>
+        <img src="/favicon.svg" alt="" class="login-card__logo-icon" />
         <div>
           <div class="login-card__title">АТЛАС</div>
-          <div class="login-card__sub">Вход в систему</div>
+          <div class="login-card__sub">Система научной деятельности</div>
         </div>
       </div>
 
@@ -16,6 +16,7 @@
         type="password"
         class="login-card__input"
         placeholder="Введите пароль"
+        autocomplete="current-password"
         autofocus
         :disabled="loading"
       />
@@ -48,8 +49,9 @@ async function submit() {
   try {
     await authApi.login(password.value)
     invalidateAuthCache()
-    const redirect = route.query.redirect || '/'
-    router.push(redirect)
+    // Только внутренние пути — защита от открытого редиректа (?redirect=https://…)
+    const redirect = String(route.query.redirect || '/')
+    router.push(redirect.startsWith('/') && !redirect.startsWith('//') ? redirect : '/')
   } catch (e) {
     error.value = e.message || 'Не удалось войти'
   } finally {
@@ -83,15 +85,13 @@ async function submit() {
   gap: 12px;
   margin-bottom: 12px;
 }
-.login-card__logo-icon {
-  font-size: 30px;
-  color: var(--c-accent);
-}
+.login-card__logo-icon { width: 36px; height: 36px; }
 .login-card__title {
   font-size: 18px;
   font-weight: 700;
   background: linear-gradient(135deg, var(--c-accent), var(--c-accent2));
   -webkit-background-clip: text;
+  background-clip: text;
   -webkit-text-fill-color: transparent;
   letter-spacing: 2px;
 }
