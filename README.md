@@ -1,73 +1,125 @@
 # СНД «АТЛАС»
 ## Автоматизированная Траектория Локализации Академических Сведений
 
-Централизованная система управления научной деятельностью.
+Централизованная система учёта научной деятельности: статьи и заключения об открытом
+опубликовании, рационализаторские предложения, программное обеспечение с комплектом
+документов, авторы, сборники, конференции и отчётность.
 
 ---
 
-## Стек технологий
+## Возможности
 
-| Слой       | Технология              |
-|------------|-------------------------|
-| Frontend   | Vue 3 + Vite            |
-| Backend    | FastAPI (Python 3.12)   |
-| База данных| PostgreSQL 16           |
-| Хранилище  | Локальный сервер (gzip) |
-| Контейнеры | Docker + Docker Compose |
+| Раздел | Что умеет |
+|---|---|
+| **Дашборд** | Сводка, последние добавления, ближайшие конференции, активные авторы, блок «Требует внимания» (статьи без заключения, ПО с неполным комплектом документов) |
+| **Научные статьи** | Файл статьи (PDF/DOC/DOCX/ODT/RTF) с предпросмотром, авторы с порядком и главным автором, сборник, каталоги, фильтры и сортировка, групповые действия |
+| **Заключения** | Автоматическое формирование DOCX по шаблону (название, авторы, дата подставляются сами) или загрузка своего файла; предпросмотр прямо в карточке |
+| **Рац. предложения** | Файл, свидетельство (в т.ч. скан), каталоги, фильтр «есть/нет свидетельства» |
+| **ПО** | ZIP с исходниками и просмотр его содержимого, комплект из 8 документов с прогрессом, скачивание комплекта одним архивом |
+| **Авторы** | Справочник, карточка автора со всеми работами, объединение дублей, оценочная ведомость |
+| **Сборники** | Карточки с обложкой, сроками, статусом и списком статей |
+| **Конференции** | Календарь со статусами «идёт / скоро / прошла», участники, экспорт в календарь (.ics) |
+| **Отчётность** | План публикаций за период, список сборников, оценочная ведомость — экспорт в DOCX и Excel (CSV), печать |
+| **Шаблоны** | DOCX-шаблоны заключений и образцы документов ПО |
+
+Также: глобальный поиск по всей системе (**Ctrl+K**), светлая и тёмная тема, адаптивная
+вёрстка для планшетов и телефонов, работа в закрытой сети без доступа в интернет.
+
+---
+
+## Стек
+
+| Слой | Технология |
+|---|---|
+| Frontend | Vue 3 + Vite, nginx |
+| Backend | FastAPI (Python 3.12), SQLAlchemy 2 (async) |
+| База данных | PostgreSQL 16 |
+| Хранилище файлов | Docker volume (текстовые и офисные форматы сжимаются gzip) |
+| Развёртывание | Docker Compose |
 
 ---
 
 ## Быстрый старт
 
-### 1. Клонировать / распаковать проект
-
-```bash
-cd atlas/
-```
-
-### 2. Создать файл переменных окружения
-
 ```bash
 cp .env.example .env
-# Отредактируйте .env — смените пароли и SECRET_KEY
-```
-
-### 3. Запустить систему
-
-```bash
+# Обязательно смените в .env: ADMIN_PASSWORD, SECRET_KEY, POSTGRES_PASSWORD
 docker compose up --build -d
 ```
 
-### 4. Открыть в браузере
+Откройте **http://адрес-сервера/** и войдите с паролем `ADMIN_PASSWORD`.
 
-| Сервис         | URL                      |
-|----------------|--------------------------|
-| Веб-интерфейс  | http://localhost          |
-| API Swagger UI | http://localhost:8000/docs|
-| API ReDoc      | http://localhost:8000/redoc|
-| PgAdmin        | http://localhost:5050 (с флагом --profile tools) |
+| Сервис | Адрес |
+|---|---|
+| Веб-интерфейс | http://localhost (порт задаётся `HTTP_PORT`) |
+| Документация API | http://localhost/docs, http://localhost/redoc |
+| PgAdmin | http://localhost:5050 — только с сервера, запуск: `docker compose --profile tools up -d` |
+
+Система открывается с любого компьютера локальной сети по адресу сервера — все запросы
+к API идут через nginx на том же адресе (`/api`), отдельный порт backend наружу не нужен.
 
 ---
 
-## Запуск с PgAdmin (опционально)
+## Настройка (`.env`)
+
+| Переменная | Назначение |
+|---|---|
+| `ADMIN_PASSWORD` | Единый пароль входа. После смены все сессии завершаются |
+| `SECRET_KEY` | Ключ подписи сессий — длинная случайная строка |
+| `POSTGRES_*` | Параметры БД |
+| `MAX_FILE_SIZE_MB` | Максимальный размер загружаемого файла (по умолчанию 100 МБ) |
+| `HTTP_PORT` | Порт веб-интерфейса |
+| `COOKIE_SECURE` | `true`, если система работает по HTTPS |
+| `WEB_CONCURRENCY` | Число процессов backend |
+
+Защита от подбора пароля: не более 10 неудачных попыток входа с одного адреса за 5 минут.
+
+---
+
+## Обновление
 
 ```bash
-docker compose --profile tools up -d
+git pull
+docker compose up --build -d
+```
+
+Схема БД обновляется автоматически при старте backend: файлы `backend/migrations/NNN_*.sql`
+применяются по порядку, каждый один раз (учёт в таблице `schema_migrations`). Все миграции
+идемпотентны, поэтому обновление безопасно и для баз, созданных старыми версиями системы.
+
+---
+
+## Резервное копирование
+
+```bash
+./scripts/backup.sh            # → ./backups/atlas_db_*.dump и atlas_uploads_*.tar.gz
+```
+
+Восстановление:
+
+```bash
+docker compose exec -T db pg_restore -U atlas_user -d atlas --clean --if-exists < backups/atlas_db_XXXX.dump
+docker compose exec -T backend tar -C /app -xzf - < backups/atlas_uploads_XXXX.tar.gz
 ```
 
 ---
 
-## Разработка (без Docker)
+## Разработка
 
 ### Backend
 
 ```bash
 cd backend
-python -m venv venv
-source venv/bin/activate      # Windows: venv\Scripts\activate
-pip install -r requirements.txt
-# Создайте БД PostgreSQL и настройте DATABASE_URL в .env
+python -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
+pip install -r requirements-dev.txt
+export DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/atlas UPLOAD_DIR=./uploads
 uvicorn app.main:app --reload --port 8000
+```
+
+Тесты (нужна отдельная пустая БД — её схема пересоздаётся):
+
+```bash
+ATLAS_TEST_DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/atlas_test pytest
 ```
 
 ### Frontend
@@ -75,8 +127,11 @@ uvicorn app.main:app --reload --port 8000
 ```bash
 cd frontend
 npm install
-npm run dev        # → http://localhost:5173
+npm run dev        # → http://localhost:5173 (запросы /api проксируются на :8000)
 ```
+
+Или всё в Docker с автоперезагрузкой backend:
+`docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build`
 
 ---
 
@@ -84,103 +139,40 @@ npm run dev        # → http://localhost:5173
 
 ```
 atlas/
-├── docker-compose.yml
-├── .env.example
+├── docker-compose.yml          # production
+├── docker-compose.dev.yml      # override для разработки
+├── scripts/backup.sh           # резервная копия БД и файлов
 ├── backend/
-│   ├── Dockerfile
-│   ├── requirements.txt
-│   ├── migrations/
-│   │   └── init.sql           # Схема БД (выполняется при старте)
+│   ├── migrations/             # 001_init.sql … — применяются автоматически
+│   ├── tests/                  # интеграционные тесты API (pytest)
 │   └── app/
-│       ├── main.py
-│       ├── core/config.py
-│       ├── db/
-│       │   ├── base.py
-│       │   └── session.py
-│       ├── models/models.py   # Все SQLAlchemy модели
-│       ├── schemas/schemas.py # Pydantic схемы
-│       ├── services/
-│       │   └── file_service.py  # Сжатие / распаковка файлов
-│       └── api/v1/endpoints/
-│           ├── articles.py
-│           ├── proposals.py
-│           ├── software.py
-│           ├── collections.py
-│           ├── authors.py
-│           ├── conferences.py
-│           ├── documents.py
-│           ├── templates.py
-│           └── reports.py
+│       ├── main.py             # приложение, миграции при старте, защитные заголовки
+│       ├── core/               # настройки, авторизация
+│       ├── db/                 # подключение к БД, раннер миграций
+│       ├── models/ schemas/    # SQLAlchemy-модели и Pydantic-схемы
+│       ├── services/           # файлы, предпросмотр, заключения, экспорт отчётов
+│       └── api/v1/endpoints/   # articles, proposals, software, authors, catalogs, reports…
 └── frontend/
-    ├── Dockerfile
     ├── nginx.conf
-    ├── index.html
     └── src/
-        ├── main.js
-        ├── App.vue            # Layout с сайдбаром
-        ├── router/
-        ├── assets/main.css    # Design system
-        ├── utils/api.js       # Axios + все API методы
-        ├── components/common/
-        │   ├── FileUpload.vue   # Drag&drop + просмотр сжатия
-        │   ├── AuthorPicker.vue # Поиск + создание авторов
-        │   ├── FileTree.vue     # Дерево файлов ZIP
-        │   └── TreeNode.vue
-        └── views/
-            ├── DashboardView.vue
-            ├── ArticlesView.vue    # + Заключения
-            ├── ProposalsView.vue
-            ├── SoftwareView.vue    # + 7 документов + ZIP viewer
-            ├── CollectionsView.vue
-            ├── AuthorsView.vue     # + Оценочная ведомость
-            ├── ConferencesView.vue # + Фильтр по датам
-            ├── ReportsView.vue     # + План публикаций
-            └── TemplatesView.vue
+        ├── utils/              # api.js (все запросы), format.js (даты, размеры, ФИО)
+        ├── composables/        # сортировка, подтверждения, открытие записи по ссылке
+        ├── components/common/  # Modal, DocumentViewer, CatalogSidebar, AuthorPicker, GlobalSearch…
+        └── views/              # страницы разделов
 ```
 
 ---
 
-## Сжатие файлов
+## Шаблон заключения
 
-Система автоматически сжимает загружаемые файлы:
+В DOCX-шаблон вставляются метки, которые заменяются при формировании:
 
-- **PDF, DOCX, TXT, XML** → gzip (уровень 6)
-- **ZIP** → gzip-обёртка поверх архива
-- **Изображения** → хранятся без сжатия (уже оптимизированы)
+| Метка | Значение |
+|---|---|
+| `[название_статьи]` | название статьи |
+| `[ФИО_авторов]` | «Иванов И.И., Петров П.П.» |
+| `[окончание_автор]` | «а» для одного автора, «ов» — для нескольких |
+| `[главный_автор]` | главный автор (или первый в списке) |
+| `[месяц_загрузки]`, `[год_загрузки]` | «апреля», «2026» |
 
-При скачивании сервер автоматически распаковывает файл.  
-Степень сжатия отображается в интерфейсе (например, `-42%`).
-
----
-
-## Управление
-
-```bash
-# Остановить
-docker compose down
-
-# Остановить и удалить данные (ОСТОРОЖНО)
-docker compose down -v
-
-# Просмотр логов
-docker compose logs -f backend
-docker compose logs -f frontend
-
-# Перезапустить один сервис
-docker compose restart backend
-```
-
----
-
-## Модули системы
-
-| Модуль               | Функциональность                                          |
-|----------------------|-----------------------------------------------------------|
-| Научные статьи       | Загрузка, авторы, сборники, заключения, скачивание        |
-| Рац. предложения     | Загрузка, типы, авторы, каталоги                          |
-| ПО                   | ZIP-архивы, просмотр структуры, 7 комплектных документов  |
-| Авторы               | Справочник + оценочная ведомость (рейтинг)                |
-| Сборники             | Карточки с датами, статусом, фото                         |
-| Конференции          | Календарь, фильтр по датам                                |
-| Отчётность           | План публикаций + список сборников                        |
-| Шаблоны              | DOCX-шаблоны для заключений и документов ПО               |
+Метки можно ставить и в колонтитулах, и в таблицах.

@@ -27,3 +27,4 @@ backend/uploads/
 .DS_Store
 *.swp
 .pytest_cache/
+backups/
